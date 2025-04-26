@@ -220,7 +220,8 @@ Motivo: {session.get('motivo')}
 Telefone: {session.get('telefone')}
 Idioma: {session.get('language')}
 
-Aceitar este agendamento?",
+"text": f"🆕 Novo agendamento:\n\n👤 Nome: {nome}\n🗓️ Data/Hora: {data_hora}\n📋 Motivo: {motivo}\n🗣️ Idioma: {idioma}\n\nDeseja aceitar este agendamento?",
+
                     "actions": [
                         {
                             "type": "message",

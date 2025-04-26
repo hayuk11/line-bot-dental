@@ -9,10 +9,8 @@ app = Flask(__name__)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN")
 
-# Nome do arquivo JSON que salva idiomas
 IDIOMA_FILE = "user_languages.json"
 
-# Funções para carregar/salvar JSON
 def carregar_idiomas():
     try:
         with open(IDIOMA_FILE, "r", encoding="utf-8") as f:
@@ -24,8 +22,10 @@ def salvar_idiomas(data):
     with open(IDIOMA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# Carregar idiomas na memória
 user_languages = carregar_idiomas()
+
+# Estado dos pacientes para saber em que etapa estão
+user_states = {}
 
 def reply_to_user(reply_token, messages):
     headers = {
@@ -38,40 +38,15 @@ def reply_to_user(reply_token, messages):
     }
     requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=body)
 
-def detectar_idioma_com_openai(mensagem_usuario):
-    try:
-        resposta = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Detecte o idioma da seguinte frase. Responda apenas com 'ja', 'en', 'pt' ou 'outro'."},
-                {"role": "user", "content": mensagem_usuario}
-            ]
-        )
-        idioma_detectado = resposta.choices[0].message['content'].strip().lower()
-        if idioma_detectado not in ["ja", "en", "pt"]:
-            idioma_detectado = "ja"
-        return idioma_detectado
-    except:
-        return "ja"
-
-def gerar_resposta_com_ia(idioma, mensagem_usuario):
+def gerar_resposta(mensagem_usuario, idioma):
     prompt = ""
 
     if idioma == "en":
-        prompt = f"""
-You are a polite receptionist AI for a dental clinic in Japan.
-Answer clearly in English. The patient's message is: "{mensagem_usuario}"
-"""
+        prompt = f"You are a polite receptionist AI for a dental clinic in Japan. Answer clearly in English. Patient message: "{mensagem_usuario}""
     elif idioma == "pt":
-        prompt = f"""
-Você é uma recepcionista educada de uma clínica odontológica no Japão.
-Responda em português claro. A mensagem do paciente é: "{mensagem_usuario}"
-"""
+        prompt = f"Você é uma recepcionista educada de uma clínica odontológica no Japão. Responda claramente em português. Mensagem do paciente: "{mensagem_usuario}""
     else:
-        prompt = f"""
-あなたは日本の歯科クリニックの丁寧な受付AIです。
-以下の患者さんのメッセージに対して、日本語で丁寧に回答してください："{mensagem_usuario}"
-"""
+        prompt = f"あなたは日本の歯科クリニックの丁寧な受付AIです。次の患者のメッセージに日本語で回答してください："{mensagem_usuario}""
 
     try:
         resposta = openai.ChatCompletion.create(
@@ -82,9 +57,17 @@ Responda em português claro. A mensagem do paciente é: "{mensagem_usuario}"
     except:
         return "申し訳ありません。現在、システムが混雑しています。後ほどお試しください。"
 
+def mensagem_alerta_tsuyaku(idioma):
+    if idioma == "en":
+        return "【Important Notice】\n\nOur clinic does not provide interpreter services.\nIf you are not fluent in Japanese, please bring an interpreter with you. 🔴"
+    elif idioma == "pt":
+        return "【Aviso Importante】\n\nNossa clínica não oferece serviço de intérprete.\nCaso não fale japonês fluente, será necessário trazer um intérprete. 🔴"
+    else:
+        return "【重要なお知らせ】\n\n当院では通訳者のご用意はございません。\n日本語での対応ができない場合、通訳の方の同伴が必要です。🔴"
+
 @app.route("/callback", methods=["POST"])
 def callback():
-    global user_languages
+    global user_languages, user_states
     body = request.json
 
     for event in body["events"]:
@@ -93,52 +76,65 @@ def callback():
             reply_token = event["replyToken"]
             user_id = event["source"]["userId"]
 
-            if "予約" in user_message:
-                reply_text = "ご予約ですね！お名前、希望日時、希望治療内容を教えてください。😊"
-                reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
-            elif "質問" in user_message:
-                reply_text = "ご質問内容を選んでください：\n1️⃣ 歯痛について\n2️⃣ 費用について"
-                reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
-            elif "1" == user_message:
-                reply_text = "歯痛ですね。痛みの程度や場所を教えていただけますか？🦷"
-                reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
-            elif "2" == user_message:
-                reply_text = "費用についてですね。保険適用時は3割負担となります。💰"
-                reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
-            else:
-                if user_id not in user_languages:
-                    idioma_detectado = detectar_idioma_com_openai(user_message)
-                    user_languages[user_id] = idioma_detectado
+            if user_id not in user_languages:
+                if user_message in ["日本語", "English", "Português", "Other"]:
+                    if user_message == "日本語":
+                        user_languages[user_id] = "ja"
+                    elif user_message == "English":
+                        user_languages[user_id] = "en"
+                    elif user_message == "Português":
+                        user_languages[user_id] = "pt"
+                    else:
+                        user_languages[user_id] = "ja"  # Default safe fallback
                     salvar_idiomas(user_languages)
+
+                    # Depois que escolhe idioma, já avisa sobre necessidade de tsuyaku
+                    aviso = mensagem_alerta_tsuyaku(user_languages[user_id])
+
+                    reply_to_user(reply_token, [
+                        {"type": "text", "text": "言語設定が完了しました。ご用件をどうぞ！😊"},
+                        {"type": "text", "text": aviso}
+                    ])
+
+                    user_states[user_id] = "inicio"
                 else:
-                    idioma_detectado = user_languages[user_id]
+                    reply_to_user(reply_token, [{
+                        "type": "text",
+                        "text": "こんにちは！Please select your preferred language 🌐",
+                        "quickReply": {
+                            "items": [
+                                {"type": "action", "action": {"type": "message", "label": "🇯🇵 日本語", "text": "日本語"}},
+                                {"type": "action", "action": {"type": "message", "label": "🇺🇸 English", "text": "English"}},
+                                {"type": "action", "action": {"type": "message", "label": "🇧🇷 Português", "text": "Português"}},
+                                {"type": "action", "action": {"type": "message", "label": "🌐 Other", "text": "Other"}}
+                            ]
+                        }
+                    }])
+            else:
+                idioma = user_languages[user_id]
+                estado = user_states.get(user_id, "inicio")
 
-                resposta = gerar_resposta_com_ia(idioma_detectado, user_message)
+                if user_message in ["予約", "Agendar", "Book"]:
+                    user_states[user_id] = "nome"
+                    reply_to_user(reply_token, [{"type": "text", "text": "Por favor, informe seu nome completo. 📝"}])
+                elif estado == "nome":
+                    user_states[user_id] = "data"
+                    reply_to_user(reply_token, [{"type": "text", "text": "Qual a data e horário desejado? 📅 (ex: 6月10日15時)"}])
+                elif estado == "data":
+                    user_states[user_id] = "tratamento"
+                    reply_to_user(reply_token, [{"type": "text", "text": "Qual o motivo da consulta? (ex: limpeza, dor de dente) 🦷"}])
+                elif estado == "tratamento":
+                    # Finalizando agendamento com alerta tsuyaku
+                    aviso = mensagem_alerta_tsuyaku(idioma)
+                    reply_to_user(reply_token, [
+                        {"type": "text", "text": "ご予約内容を承りました！ありがとうございました。😊"},
+                        {"type": "text", "text": aviso}
+                    ])
+                    user_states[user_id] = "inicio"
+                else:
+                    resposta = gerar_resposta(user_message, idioma)
+                    reply_to_user(reply_token, [{"type": "text", "text": resposta}])
 
-                reply_to_user(reply_token, [{
-                    "type": "text",
-                    "text": resposta,
-                    "quickReply": {
-                        "items": [
-                            {
-                                "type": "action",
-                                "action": {
-                                    "type": "message",
-                                    "label": "📅 予約する",
-                                    "text": "予約"
-                                }
-                            },
-                            {
-                                "type": "action",
-                                "action": {
-                                    "type": "message",
-                                    "label": "❓ 質問する",
-                                    "text": "質問"
-                                }
-                            }
-                        ]
-                    }
-                }])
     return "OK"
 
 if __name__ == "__main__":

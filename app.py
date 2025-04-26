@@ -2,14 +2,30 @@ from flask import Flask, request
 import requests
 import openai
 import os
+import json
 
 app = Flask(__name__)
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN")
 
-# Memória de idiomas por userId
-user_languages = {}
+# Nome do arquivo JSON que salva idiomas
+IDIOMA_FILE = "user_languages.json"
+
+# Funções para carregar/salvar JSON
+def carregar_idiomas():
+    try:
+        with open(IDIOMA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def salvar_idiomas(data):
+    with open(IDIOMA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# Carregar idiomas na memória
+user_languages = carregar_idiomas()
 
 def reply_to_user(reply_token, messages):
     headers = {
@@ -51,7 +67,7 @@ Answer clearly in English. The patient's message is: "{mensagem_usuario}"
 Você é uma recepcionista educada de uma clínica odontológica no Japão.
 Responda em português claro. A mensagem do paciente é: "{mensagem_usuario}"
 """
-    else:  # padrão japonês
+    else:
         prompt = f"""
 あなたは日本の歯科クリニックの丁寧な受付AIです。
 以下の患者さんのメッセージに対して、日本語で丁寧に回答してください："{mensagem_usuario}"
@@ -60,9 +76,7 @@ Responda em português claro. A mensagem do paciente é: "{mensagem_usuario}"
     try:
         resposta = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": prompt}
-            ]
+            messages=[{"role": "system", "content": prompt}]
         )
         return resposta.choices[0].message['content']
     except:
@@ -70,6 +84,7 @@ Responda em português claro. A mensagem do paciente é: "{mensagem_usuario}"
 
 @app.route("/callback", methods=["POST"])
 def callback():
+    global user_languages
     body = request.json
 
     for event in body["events"]:
@@ -78,7 +93,6 @@ def callback():
             reply_token = event["replyToken"]
             user_id = event["source"]["userId"]
 
-            # Quick replies para comandos fixos
             if "予約" in user_message:
                 reply_text = "ご予約ですね！お名前、希望日時、希望治療内容を教えてください。😊"
                 reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
@@ -92,10 +106,10 @@ def callback():
                 reply_text = "費用についてですね。保険適用時は3割負担となります。💰"
                 reply_to_user(reply_token, [{"type": "text", "text": reply_text}])
             else:
-                # Inteligência para idioma
                 if user_id not in user_languages:
                     idioma_detectado = detectar_idioma_com_openai(user_message)
                     user_languages[user_id] = idioma_detectado
+                    salvar_idiomas(user_languages)
                 else:
                     idioma_detectado = user_languages[user_id]
 

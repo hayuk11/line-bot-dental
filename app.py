@@ -1,33 +1,26 @@
-from flask import Flask, request
-import requests
-import openai
 import os
-import json
+import requests
+from flask import Flask, request, jsonify
+from supabase import create_client, Client
+from datetime import datetime, timedelta
+import openai
+
+# Variáveis de ambiente
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+openai.api_key = OPENAI_API_KEY
 
 app = Flask(__name__)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN")
+user_sessions = {}
 
-IDIOMA_FILE = "user_languages.json"
-
-def carregar_idiomas():
-    try:
-        with open(IDIOMA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def salvar_idiomas(data):
-    with open(IDIOMA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-user_languages = carregar_idiomas()
-user_states = {}
-
-def reply_to_user(reply_token, messages):
+def send_line_message(reply_token, messages):
     headers = {
-        "Authorization": f"Bearer {CHANNEL_ACCESS_TOKEN}",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
     body = {
@@ -36,105 +29,189 @@ def reply_to_user(reply_token, messages):
     }
     requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=body)
 
-def detectar_idioma(texto):
-    texto = texto.lower()
-    if "port" in texto:
-        return "pt"
-    elif "eng" in texto:
-        return "en"
-    elif "jap" in texto or "日本語" in texto:
-        return "ja"
-    else:
-        return None
+def push_message_to_clinic(user_message):
+    headers = {
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    clinic_user_id = os.getenv("CLINIC_LINE_USER_ID")
+    body = {
+        "to": clinic_user_id,
+        "messages": [{"type": "text", "text": user_message}]
+    }
+    requests.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body)
 
-def saudacao_menu(idioma):
-    if idioma == "pt":
-        return "Como podemos ajudar?
-1. Agendar consulta
-2. Saber valores
-3. Falar com atendente"
-    elif idioma == "en":
-        return "How can we help you?
-1. Book an appointment
-2. Price information
-3. Talk to staff"
-    else:
-        return "ご用件をお知らせください。
-1. 予約したい
-2. 治療費を知りたい
-3. スタッフと話したい"
-
-def mensagem_alerta_tsuyaku(idioma):
-    if idioma == "en":
-        return "【Important Notice】\n\nOur clinic does not provide interpreter services.\nIf you are not fluent in Japanese, please bring an interpreter with you. 🔴"
-    elif idioma == "pt":
-        return "【Aviso Importante】\n\nNossa clínica não oferece serviço de intérprete.\nCaso não fale japonês fluente, será necessário trazer um intérprete. 🔴"
-    else:
-        return "【重要なお知らせ】\n\n当院では通訳者のご用意はございません。\n日本語での対応ができない場合、通訳の方の同伴が必要です。🔴"
+def available_times(date_selected):
+    base_times = [
+        "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
+        "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30"
+    ]
+    data = supabase.table("Agendamentos").select("*").eq("data_hora", date_selected).execute()
+    booked_times = [record["data_hora"].split(" ")[1] for record in data.data if date_selected in record["data_hora"]]
+    return [t for t in base_times if t not in booked_times]
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    global user_languages, user_states
     body = request.json
+    for event in body.get("events", []):
+        if event["type"] != "message" or event["message"]["type"] != "text":
+            continue
 
-    for event in body["events"]:
-        if event["type"] == "message" and event["message"]["type"] == "text":
-            user_message = event["message"]["text"]
-            reply_token = event["replyToken"]
-            user_id = event["source"]["userId"]
+        user_id = event["source"]["userId"]
+        user_message = event["message"]["text"]
+        reply_token = event["replyToken"]
+        session = user_sessions.get(user_id, {"step": "language"})
 
-            estado = user_states.get(user_id, "inicio")
+        if session["step"] == "language":
+            send_line_message(reply_token, [{
+                "type": "text",
+                "text": "🌐 Please select your language:",
+                "quickReply": {
+                    "items": [
+                        quick_reply("🇯🇵 日本語"),
+                        quick_reply("🇺🇸 English"),
+                        quick_reply("🇧🇷 Português"),
+                        quick_reply("🌏 Other")
+                    ]
+                }
+            }])
+            session["step"] = "waiting_language"
+            user_sessions[user_id] = session
+            return "OK"
 
-            if user_id not in user_languages or estado == "esperando_idioma":
-                if user_message in ["日本語", "English", "Português"]:
-                    idioma = detectar_idioma(user_message)
-                    user_languages[user_id] = idioma
-                    salvar_idiomas(user_languages)
-                    user_states[user_id] = "inicio"
-                    aviso = mensagem_alerta_tsuyaku(idioma)
-                    menu = saudacao_menu(idioma)
-                    reply_to_user(reply_token, [
-                        {"type": "text", "text": "Idioma configurado com sucesso!"},
-                        {"type": "text", "text": aviso},
-                        {"type": "text", "text": menu}
-                    ])
-                elif user_message == "Other":
-                    user_states[user_id] = "esperando_idioma"
-                    reply_to_user(reply_token, [{"type": "text", "text": "Please type your preferred language (e.g., English, Vietnamese, Tagalog...)"}])
-                else:
-                    idioma_detectado = detectar_idioma(user_message)
-                    if estado == "esperando_idioma" and idioma_detectado:
-                        user_languages[user_id] = idioma_detectado
-                        salvar_idiomas(user_languages)
-                        user_states[user_id] = "inicio"
-                        aviso = mensagem_alerta_tsuyaku(idioma_detectado)
-                        menu = saudacao_menu(idioma_detectado)
-                        reply_to_user(reply_token, [
-                            {"type": "text", "text": "Language saved!"},
-                            {"type": "text", "text": aviso},
-                            {"type": "text", "text": menu}
-                        ])
-                    else:
-                        reply_to_user(reply_token, [{
-                            "type": "text",
-                            "text": "こんにちは！Please select your preferred language 🌐",
-                            "quickReply": {
-                                "items": [
-                                    {"type": "action", "action": {"type": "message", "label": "🇯🇵 日本語", "text": "日本語"}},
-                                    {"type": "action", "action": {"type": "message", "label": "🇺🇸 English", "text": "English"}},
-                                    {"type": "action", "action": {"type": "message", "label": "🇧🇷 Português", "text": "Português"}},
-                                    {"type": "action", "action": {"type": "message", "label": "🌐 Other", "text": "Other"}}
-                                ]
-                            }
-                        }])
+        if session["step"] == "waiting_language":
+            session["language"] = user_message
+            session["step"] = "japanese_status"
+            send_line_message(reply_token, [{
+                "type": "text",
+                "text": "Você fala japonês fluentemente? 🇯🇵",
+                "quickReply": {
+                    "items": [
+                        quick_reply("Sim"),
+                        quick_reply("Não (vou trazer intérprete)"),
+                        quick_reply("Não (não trarei intérprete)")
+                    ]
+                }
+            }])
+            user_sessions[user_id] = session
+            return "OK"
+
+        if session["step"] == "japanese_status":
+            if user_message == "Não (não trarei intérprete)":
+                session["status_japones"] = "Não trará intérprete"
+                session["step"] = "confirm_translate_app"
+                send_line_message(reply_token, [{
+                    "type": "text",
+                    "text": "Nossa clínica não possui intérprete. Você consegue se comunicar sozinho ou usando aplicativo de tradução? 📱",
+                    "quickReply": {
+                        "items": [
+                            quick_reply("Sim, consigo"),
+                            quick_reply("Não, não consigo")
+                        ]
+                    }
+                }])
+                user_sessions[user_id] = session
+                return "OK"
             else:
-                idioma = user_languages[user_id]
-                estado = user_states.get(user_id, "inicio")
+                session["status_japones"] = user_message
+                session["step"] = "collect_name"
+                send_line_message(reply_token, [{"type": "text", "text": "Por favor, informe seu nome completo. ✍️"}])
+                user_sessions[user_id] = session
+                return "OK"
 
-                resposta = saudacao_menu(idioma) if user_message in ["1", "2", "3"] else user_message
-                reply_to_user(reply_token, [{"type": "text", "text": resposta}])
+        if session["step"] == "confirm_translate_app":
+            if user_message == "Sim, consigo":
+                session["step"] = "collect_name"
+                send_line_message(reply_token, [{"type": "text", "text": "Por favor, informe seu nome completo. ✍️"}])
+            else:
+                send_line_message(reply_token, [{"type": "text", "text": "Desculpe, mas através do chat não conseguiremos concluir seu agendamento devido à dificuldade com o idioma e à ausência de intérprete.
 
-    return "OK"
+Por favor, entre em contato diretamente com a clínica para mais informações. ☎️"}])
+                user_sessions.pop(user_id, None)
+            return "OK"
+
+        if session["step"] == "collect_name":
+            session["nome"] = user_message
+            session["step"] = "collect_date"
+            send_line_message(reply_token, [{"type": "text", "text": "Por favor, informe o dia desejado (ex: 2025-05-20). 📅"}])
+            user_sessions[user_id] = session
+            return "OK"
+
+        if session["step"] == "collect_date":
+            session["date_selected"] = user_message
+            times = available_times(session["date_selected"])
+            if not times:
+                send_line_message(reply_token, [{"type": "text", "text": "Não temos horários disponíveis neste dia. Por favor, escolha outra data. 🙏"}])
+                session["step"] = "collect_date"
+            else:
+                session["step"] = "select_time"
+                send_line_message(reply_token, [{
+                    "type": "text",
+                    "text": "Escolha um horário disponível:",
+                    "quickReply": {
+                        "items": [quick_reply(t) for t in times]
+                    }
+                }])
+            user_sessions[user_id] = session
+            return "OK"
+
+        if session["step"] == "select_time":
+            session["data_hora"] = f"{session['date_selected']} {user_message}"
+            session["step"] = "collect_motivo"
+            send_line_message(reply_token, [{"type": "text", "text": "Qual o motivo da consulta? 🦷"}])
+            user_sessions[user_id] = session
+            return "OK"
+
+        if session["step"] == "collect_motivo":
+            session["motivo"] = user_message
+            session["step"] = "collect_telefone"
+            send_line_message(reply_token, [{"type": "text", "text": "Por favor, informe seu telefone de contato. 📞"}])
+            user_sessions[user_id] = session
+            return "OK"
+
+        if session["step"] == "collect_telefone":
+            session["telefone"] = user_message
+
+            # Salvar no Supabase
+            supabase.table("Agendamentos").insert({
+                "user_id": user_id,
+                "nome": session.get("nome"),
+                "data_hora": session.get("data_hora"),
+                "motivo": session.get("motivo"),
+                "telefone": session.get("telefone"),
+                "idioma": session.get("language"),
+                "status_japones": session.get("status_japones"),
+                "criado_em": datetime.now().isoformat()
+            }).execute()
+
+            # Mensagem automática pro paciente
+            send_line_message(reply_token, [{"type": "text", "text": "✅ Sua solicitação foi recebida! Em breve a clínica confirmará com você. Obrigado!"}])
+
+            # Mensagem automática pro LINE da clínica
+            msg = f"📢 Novo agendamento:
+
+Nome: {session.get('nome')}
+Data/Hora: {session.get('data_hora')}
+Motivo: {session.get('motivo')}
+Telefone: {session.get('telefone')}
+Idioma: {session.get('language')}
+Situação Japonês: {session.get('status_japones')}"
+            push_message_to_clinic(msg)
+
+            user_sessions.pop(user_id, None)
+            return "OK"
+
+    return jsonify({"status": "ok"})
+
+def quick_reply(label):
+    return {
+        "type": "action",
+        "action": {
+            "type": "message",
+            "label": label,
+            "text": label
+        }
+    }
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=8080)

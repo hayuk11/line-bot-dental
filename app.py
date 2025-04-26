@@ -2,13 +2,9 @@
 def callback():
     body = request.json
 
-    for event in body["events"]:
+    for event in body.get("events", []):
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_id = event["source"]["userId"]
-            print("🪪 USER ID:", user_id)
+            print("🆔 USER ID:", user_id)  # <-- Adiciona isso!
 
-            reply_token = event["replyToken"]
-            reply_text = "Mensagem recebida ✅"
-            send_message(reply_token, reply_text)
-
-    return "OK"
+            # O restante do seu código...

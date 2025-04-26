@@ -1,3 +1,10 @@
+from flask import Flask, request
+import requests
+import json
+import os
+
+app = Flask(__name__)  # <= ESSA LINHA AQUI
+
 @app.route("/callback", methods=["POST"])
 def callback():
     body = request.json

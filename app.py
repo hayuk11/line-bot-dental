@@ -24,7 +24,6 @@ def salvar_idiomas(data):
 
 user_languages = carregar_idiomas()
 
-# Estado dos pacientes para saber em que etapa estão
 user_states = {}
 
 def reply_to_user(reply_token, messages):
@@ -42,11 +41,11 @@ def gerar_resposta(mensagem_usuario, idioma):
     prompt = ""
 
     if idioma == "en":
-        prompt = f"You are a polite receptionist AI for a dental clinic in Japan. Answer clearly in English. Patient message: "{mensagem_usuario}""
+        prompt = f"You are a polite receptionist AI for a dental clinic in Japan. Answer clearly in English. Patient message: '{mensagem_usuario}'"
     elif idioma == "pt":
-        prompt = f"Você é uma recepcionista educada de uma clínica odontológica no Japão. Responda claramente em português. Mensagem do paciente: "{mensagem_usuario}""
+        prompt = f"Você é uma recepcionista educada de uma clínica odontológica no Japão. Responda claramente em português. Mensagem do paciente: '{mensagem_usuario}'"
     else:
-        prompt = f"あなたは日本の歯科クリニックの丁寧な受付AIです。次の患者のメッセージに日本語で回答してください："{mensagem_usuario}""
+        prompt = f"あなたは日本の歯科クリニックの丁寧な受付AIです。次の患者のメッセージに日本語で回答してください：'{mensagem_usuario}'"
 
     try:
         resposta = openai.ChatCompletion.create(
@@ -85,17 +84,15 @@ def callback():
                     elif user_message == "Português":
                         user_languages[user_id] = "pt"
                     else:
-                        user_languages[user_id] = "ja"  # Default safe fallback
+                        user_languages[user_id] = "ja"
                     salvar_idiomas(user_languages)
 
-                    # Depois que escolhe idioma, já avisa sobre necessidade de tsuyaku
                     aviso = mensagem_alerta_tsuyaku(user_languages[user_id])
 
                     reply_to_user(reply_token, [
                         {"type": "text", "text": "言語設定が完了しました。ご用件をどうぞ！😊"},
                         {"type": "text", "text": aviso}
                     ])
-
                     user_states[user_id] = "inicio"
                 else:
                     reply_to_user(reply_token, [{
@@ -124,7 +121,6 @@ def callback():
                     user_states[user_id] = "tratamento"
                     reply_to_user(reply_token, [{"type": "text", "text": "Qual o motivo da consulta? (ex: limpeza, dor de dente) 🦷"}])
                 elif estado == "tratamento":
-                    # Finalizando agendamento com alerta tsuyaku
                     aviso = mensagem_alerta_tsuyaku(idioma)
                     reply_to_user(reply_token, [
                         {"type": "text", "text": "ご予約内容を承りました！ありがとうございました。😊"},

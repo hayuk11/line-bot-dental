@@ -47,22 +47,22 @@ def detectar_idioma(texto):
     else:
         return None
 
-def gerar_resposta(mensagem_usuario, idioma):
-    if idioma == "en":
-        prompt = f"You are a polite receptionist AI for a dental clinic in Japan. Answer clearly in English. Patient message: '{mensagem_usuario}'"
-    elif idioma == "pt":
-        prompt = f"Você é uma recepcionista educada de uma clínica odontológica no Japão. Responda claramente em português. Mensagem do paciente: '{mensagem_usuario}'"
+def saudacao_menu(idioma):
+    if idioma == "pt":
+        return "Como podemos ajudar?
+1. Agendar consulta
+2. Saber valores
+3. Falar com atendente"
+    elif idioma == "en":
+        return "How can we help you?
+1. Book an appointment
+2. Price information
+3. Talk to staff"
     else:
-        prompt = f"あなたは日本の歯科クリニックの丁寧な受付AIです。次の患者のメッセージに日本語で回答してください：'{mensagem_usuario}'"
-
-    try:
-        resposta = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": prompt}]
-        )
-        return resposta.choices[0].message['content']
-    except:
-        return "申し訳ありません。現在、システムが混雑しています。後ほどお試しください。"
+        return "ご用件をお知らせください。
+1. 予約したい
+2. 治療費を知りたい
+3. スタッフと話したい"
 
 def mensagem_alerta_tsuyaku(idioma):
     if idioma == "en":
@@ -87,21 +87,16 @@ def callback():
 
             if user_id not in user_languages or estado == "esperando_idioma":
                 if user_message in ["日本語", "English", "Português"]:
-                    if user_message == "日本語":
-                        idioma = "ja"
-                    elif user_message == "English":
-                        idioma = "en"
-                    elif user_message == "Português":
-                        idioma = "pt"
-
+                    idioma = detectar_idioma(user_message)
                     user_languages[user_id] = idioma
                     salvar_idiomas(user_languages)
                     user_states[user_id] = "inicio"
-
                     aviso = mensagem_alerta_tsuyaku(idioma)
+                    menu = saudacao_menu(idioma)
                     reply_to_user(reply_token, [
-                        {"type": "text", "text": "言語設定が完了しました。ご用件をどうぞ！😊"},
-                        {"type": "text", "text": aviso}
+                        {"type": "text", "text": "Idioma configurado com sucesso!"},
+                        {"type": "text", "text": aviso},
+                        {"type": "text", "text": menu}
                     ])
                 elif user_message == "Other":
                     user_states[user_id] = "esperando_idioma"
@@ -113,9 +108,11 @@ def callback():
                         salvar_idiomas(user_languages)
                         user_states[user_id] = "inicio"
                         aviso = mensagem_alerta_tsuyaku(idioma_detectado)
+                        menu = saudacao_menu(idioma_detectado)
                         reply_to_user(reply_token, [
-                            {"type": "text", "text": "Language saved! You can now start your consultation."},
-                            {"type": "text", "text": aviso}
+                            {"type": "text", "text": "Language saved!"},
+                            {"type": "text", "text": aviso},
+                            {"type": "text", "text": menu}
                         ])
                     else:
                         reply_to_user(reply_token, [{
@@ -134,25 +131,8 @@ def callback():
                 idioma = user_languages[user_id]
                 estado = user_states.get(user_id, "inicio")
 
-                if user_message.lower() in ["予約", "agendar", "book"]:
-                    user_states[user_id] = "nome"
-                    reply_to_user(reply_token, [{"type": "text", "text": "Por favor, informe seu nome completo. 📝"}])
-                elif estado == "nome":
-                    user_states[user_id] = "data"
-                    reply_to_user(reply_token, [{"type": "text", "text": "Qual a data e horário desejado? 📅 (ex: 6月10日15時)"}])
-                elif estado == "data":
-                    user_states[user_id] = "tratamento"
-                    reply_to_user(reply_token, [{"type": "text", "text": "Qual o motivo da consulta? (ex: limpeza, dor de dente) 🦷"}])
-                elif estado == "tratamento":
-                    aviso = mensagem_alerta_tsuyaku(idioma)
-                    reply_to_user(reply_token, [
-                        {"type": "text", "text": "ご予約内容を承りました！ありがとうございました。😊"},
-                        {"type": "text", "text": aviso}
-                    ])
-                    user_states[user_id] = "inicio"
-                else:
-                    resposta = gerar_resposta(user_message, idioma)
-                    reply_to_user(reply_token, [{"type": "text", "text": resposta}])
+                resposta = saudacao_menu(idioma) if user_message in ["1", "2", "3"] else user_message
+                reply_to_user(reply_token, [{"type": "text", "text": resposta}])
 
     return "OK"
 

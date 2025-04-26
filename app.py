@@ -214,12 +214,6 @@ def callback():
                     "type": "confirm",
                     "text": f"Novo agendamento: ...",  # <– fecha a string com aspas
 
-Nome: {session.get('nome')}
-Data: {session.get('data_hora')}
-Motivo: {session.get('motivo')}
-Telefone: {session.get('telefone')}
-Idioma: {session.get('language')}
-
 "text": f"🆕 Novo agendamento:\n\n👤 Nome: {nome}\n🗓️ Data/Hora: {data_hora}\n📋 Motivo: {motivo}\n🗣️ Idioma: {idioma}\n\nDeseja aceitar este agendamento?",
                     "actions": [
                         {

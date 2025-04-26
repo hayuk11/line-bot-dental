@@ -212,7 +212,7 @@ def callback():
                 "altText": "Novo agendamento recebido!",
                 "template": {
                     "type": "confirm",
-                    "text": f"Novo agendamento:
+                    "text": f"Novo agendamento: ...",  # <– fecha a string com aspas
 
 Nome: {session.get('nome')}
 Data: {session.get('data_hora')}
